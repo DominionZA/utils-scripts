@@ -30,24 +30,49 @@ check_and_install_packages()
 import os
 import time
 import re
+import argparse
 from dotenv import load_dotenv
 import MySQLdb
 
 # Load environment variables
 load_dotenv()
 
-# Rest of your original script starts here
+# Rest of your original script starts here - manual file paths for standalone use
 RESTORE_FILE = r'C:\Temp\Backups\full_backup_20250724_102426.sql.gz'
 RESTORE_FILE = r'C:\Temp\Backups\ProdDump-Cleaned-20250723.sql'
 
+# Parse command line arguments
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='MySQL Database Restore Tool')
+    parser.add_argument('--host', help='MySQL host (default: from MYSQL_LOCAL_HOST env var)')
+    parser.add_argument('--port', type=int, help='MySQL port (default: from MYSQL_LOCAL_PORT env var or 3306)')
+    parser.add_argument('--user', help='MySQL username (default: from MYSQL_LOCAL_USER env var)')
+    parser.add_argument('--password', help='MySQL password (default: from MYSQL_LOCAL_PASSWORD env var)')
+    parser.add_argument('--file', help='Backup file path to restore (required)')
+    parser.add_argument('--auto-confirm', action='store_true', help='Skip confirmation prompt')
+    return parser.parse_args()
+
+# Parse arguments
+args = parse_arguments()
+
+# Configuration with command line argument fallbacks
 config = {
-    'host': os.getenv('MYSQL_LOCAL_HOST', 'localhost'),
-    'port': int(os.getenv('MYSQL_LOCAL_PORT', 3306)),
-    'user': os.getenv('MYSQL_LOCAL_USER'),
-    'password': os.getenv('MYSQL_LOCAL_PASSWORD'),
+    'host': args.host or os.getenv('MYSQL_LOCAL_HOST', 'localhost'),
+    'port': args.port or int(os.getenv('MYSQL_LOCAL_PORT', 3306)),
+    'user': args.user or os.getenv('MYSQL_LOCAL_USER'),
+    'password': args.password or os.getenv('MYSQL_LOCAL_PASSWORD'),
     'charset': 'utf8mb4',
     'use_unicode': True,
 }
+
+# Override with command line argument if provided
+if args.file:
+    RESTORE_FILE = args.file
+
+# Validate restore file exists
+if not os.path.exists(RESTORE_FILE):
+    print(f"Error: Restore file not found: {RESTORE_FILE}")
+    sys.exit(1)
 
 # The rest of your original functions and code remain exactly the same
 def print_config_and_prompt():
@@ -55,8 +80,13 @@ def print_config_and_prompt():
     print(f"Host: {config['host']}")
     print(f"Port: {config['port']}")
     print(f"User: {config['user']}")
-    print(f"Password: {'*' * len(config['password'])}")
+    print(f"Password: {'*' * len(config['password']) if config['password'] else 'None'}")
     print(f"Restore file: {RESTORE_FILE}")
+    
+    # Skip prompt if auto-confirm is set
+    if args.auto_confirm:
+        print("\nAuto-confirm enabled. Proceeding with restore...")
+        return True
     
     while True:
         response = input("\nDo you want to continue with the restore? (yes/no): ").lower()

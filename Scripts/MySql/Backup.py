@@ -4,6 +4,9 @@ import subprocess
 # Configuration variable - set to True for production backup, False for test backup
 isProd = True
 
+# TESTING FLAG - set to True to test restore integration instead of doing backup
+isTesting = True
+
 def install_base_packages():
     """Install the base packages needed for package management."""
     try:
@@ -219,27 +222,68 @@ def setup_mysql_docker_container():
         print(f"\n❌ Error: {e}")
         sys.exit(1)
 
+def test_restore_integration():
+    """Test restore script integration with container."""
+    print("\n🧪 TESTING MODE: Testing restore script invocation...")
+    
+    # Container details for existing temp-mysql-8 container
+    container_info = {
+        'host': 'localhost',
+        'port': '3307',
+        'user': 'root',
+        'password': 'testpassword',
+        'container_name': 'temp-mysql-8'
+    }
+    
+    # Test backup file
+    test_backup_file = r'C:\Temp\Backups\full_backup_20250423_201200.sql.gz'
+    
+    print(f"Testing restore with:")
+    print(f"  Container: {container_info['container_name']}")
+    print(f"  Host: {container_info['host']}:{container_info['port']}")
+    print(f"  User: {container_info['user']}")
+    print(f"  Backup file: {test_backup_file}")
+    
+    # Check if backup file exists
+    if not os.path.exists(test_backup_file):
+        print(f"❌ Test backup file not found: {test_backup_file}")
+        print("Please ensure the backup file exists or update the path.")
+        sys.exit(1)
+    
+    # Invoke restore script with container details
+    print("\n🚀 Invoking restore script...")
+    restore_cmd = [
+        sys.executable, "Scripts/MySql/Restore.py",
+        "--host", container_info['host'],
+        "--port", container_info['port'],
+        "--user", container_info['user'],
+        "--password", container_info['password'],
+        "--file", test_backup_file,
+        "--auto-confirm"
+    ]
+    
+    try:
+        print(f"Running command: {' '.join(restore_cmd)}")
+        result = subprocess.run(restore_cmd, check=True, text=True)
+        print("✅ Restore script completed successfully!")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Restore script failed with exit code: {e.returncode}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Error invoking restore script: {e}")
+        sys.exit(1)
+
 # Main execution
 if __name__ == "__main__":
     # Display current configuration
     display_configuration()
     
-    # TESTING: Skip backup and setup Docker container instead
-    print("\n🧪 TESTING MODE: Skipping backup, setting up Docker container...")
+    # Check if we're in testing mode
+    if isTesting:
+        test_restore_integration()
+        sys.exit(0)
     
-    # Setup MySQL Docker container
-    container_info = setup_mysql_docker_container()
-    
-    print(f"\nNext steps:")
-    print(f"1. Container '{container_info['container_name']}' is ready")
-    print(f"2. You can now test restore with:")
-    print(f"   python Scripts/MySql/Restore.py --host {container_info['host']} --port {container_info['port']} --user {container_info['user']} --password {container_info['password']} --file YOUR_BACKUP_FILE --auto-confirm")
-    
-    # TODO: Add restore integration here once testing is complete
-    
-    """
-    # BACKUP CODE (temporarily disabled for testing)
-    
+    # ORIGINAL BACKUP FUNCTIONALITY (preserved)
     # Check if mysqldump exists
     if not os.path.exists(MYSQL_DUMP_PATH):
         print(f"Error: mysqldump not found at {MYSQL_DUMP_PATH}")
@@ -310,4 +354,3 @@ if __name__ == "__main__":
     finally:
         cursor.close()
         conn.close()
-    """

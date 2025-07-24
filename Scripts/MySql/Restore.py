@@ -254,7 +254,7 @@ def restore_backup():
         except Exception as e:
             print(f"\nWarning: Error closing connection: {e}")
         
-        print(f"\nBackup restore completed from {RESTORE_FILE}")
+        print(f"\nDatabase restore completed from {RESTORE_FILE}")
         print(f"Tables restored: {restored_tables}")
         if error_count > 0:
             print(f"Total errors encountered (statements skipped): {error_count}")

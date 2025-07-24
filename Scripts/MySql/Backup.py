@@ -136,10 +136,109 @@ def execute_custom_sql_commands():
         cursor.close()
         conn.close()
 
+# Function to setup MySQL Docker container
+def setup_mysql_docker_container():
+    """Setup MySQL 8 Docker container for testing restore."""
+    container_name = "temp-mysql-8"
+    mysql_port = "3307"  # Use different port to avoid conflicts
+    mysql_password = "testpassword"
+    
+    print(f"\n=== Setting up MySQL Docker Container ({container_name}) ===")
+    
+    try:
+        # Check if Docker is available
+        print("Checking Docker availability...")
+        result = subprocess.run(["docker", "--version"], 
+                              capture_output=True, text=True, check=True)
+        print(f"Docker found: {result.stdout.strip()}")
+        
+        # Stop and remove existing container if it exists
+        print(f"Stopping and removing existing {container_name} container...")
+        subprocess.run(["docker", "stop", container_name], 
+                      capture_output=True, check=False)
+        subprocess.run(["docker", "rm", container_name], 
+                      capture_output=True, check=False)
+        
+        # Start new MySQL container
+        print(f"Starting new MySQL 8 container on port {mysql_port}...")
+        docker_cmd = [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "-e", f"MYSQL_ROOT_PASSWORD={mysql_password}",
+            "-e", "MYSQL_DATABASE=testdb",
+            "-p", f"{mysql_port}:3306",
+            "mysql:8.0"
+        ]
+        
+        result = subprocess.run(docker_cmd, capture_output=True, text=True, check=True)
+        container_id = result.stdout.strip()
+        print(f"Container started with ID: {container_id[:12]}")
+        
+        # Wait for MySQL to be ready
+        print("Waiting for MySQL to be ready...")
+        max_attempts = 60
+        for attempt in range(max_attempts):
+            try:
+                # Try to connect to the container
+                test_cmd = [
+                    "docker", "exec", container_name,
+                    "mysql", "-uroot", f"-p{mysql_password}",
+                    "-e", "SELECT 1"
+                ]
+                subprocess.run(test_cmd, capture_output=True, check=True)
+                print(f"\nMySQL is ready! (took {attempt + 1} seconds)")
+                break
+            except subprocess.CalledProcessError:
+                if attempt < max_attempts - 1:
+                    print(f"\rWaiting... ({attempt + 1}/{max_attempts})", end="", flush=True)
+                    time.sleep(1)
+                else:
+                    raise Exception("MySQL failed to start within 60 seconds")
+        
+        print(f"\n✅ MySQL container '{container_name}' is running and ready!")
+        print(f"   Connection details:")
+        print(f"   Host: localhost")
+        print(f"   Port: {mysql_port}")
+        print(f"   User: root")
+        print(f"   Password: {mysql_password}")
+        
+        return {
+            'host': 'localhost',
+            'port': mysql_port,
+            'user': 'root',
+            'password': mysql_password,
+            'container_name': container_name
+        }
+        
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Error setting up Docker container: {e}")
+        if e.stderr:
+            print(f"Error details: {e.stderr}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        sys.exit(1)
+
 # Main execution
 if __name__ == "__main__":
     # Display current configuration
     display_configuration()
+    
+    # TESTING: Skip backup and setup Docker container instead
+    print("\n🧪 TESTING MODE: Skipping backup, setting up Docker container...")
+    
+    # Setup MySQL Docker container
+    container_info = setup_mysql_docker_container()
+    
+    print(f"\nNext steps:")
+    print(f"1. Container '{container_info['container_name']}' is ready")
+    print(f"2. You can now test restore with:")
+    print(f"   python Scripts/MySql/Restore.py --host {container_info['host']} --port {container_info['port']} --user {container_info['user']} --password {container_info['password']} --file YOUR_BACKUP_FILE --auto-confirm")
+    
+    # TODO: Add restore integration here once testing is complete
+    
+    """
+    # BACKUP CODE (temporarily disabled for testing)
     
     # Check if mysqldump exists
     if not os.path.exists(MYSQL_DUMP_PATH):
@@ -211,3 +310,4 @@ if __name__ == "__main__":
     finally:
         cursor.close()
         conn.close()
+    """

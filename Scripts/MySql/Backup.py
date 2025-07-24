@@ -5,7 +5,10 @@ import subprocess
 isProd = True
 
 # TESTING FLAG - set to True to test restore integration instead of doing backup
-isTesting = True
+isTesting = False
+
+# SANITISE DATABASE - set to True to backup + setup Docker + restore (full workflow)
+sanitise_database = False
 
 def install_base_packages():
     """Install the base packages needed for package management."""
@@ -278,11 +281,12 @@ if __name__ == "__main__":
     # Display current configuration
     display_configuration()
     
-    # Check if we're in testing mode
+    # Testing mode - only test restore integration to save time
     if isTesting:
         test_restore_integration()
         sys.exit(0)
     
+    # Normal execution - ALWAYS do backup
     # ORIGINAL BACKUP FUNCTIONALITY (preserved)
     # Check if mysqldump exists
     if not os.path.exists(MYSQL_DUMP_PATH):
@@ -347,6 +351,33 @@ if __name__ == "__main__":
         backup_complete.set()
         progress_thread.join()
         print(f"\nBackup completed successfully. File saved as: {backup_file}")
+        
+        # After backup, check if we also want to sanitise
+        if sanitise_database:
+            print("\n🧹 SANITISING: Setting up Docker container for restore testing...")
+            
+            # Setup Docker container
+            container_info = setup_mysql_docker_container()
+            
+            # Restore the backup we just created to container
+            print(f"\n🚀 Restoring backup to container...")
+            restore_cmd = [
+                sys.executable, "Scripts/MySql/Restore.py",
+                "--host", container_info['host'],
+                "--port", container_info['port'],
+                "--user", container_info['user'],
+                "--password", container_info['password'],
+                "--file", backup_file,  # Use the backup we just created
+                "--auto-confirm"
+            ]
+            
+            try:
+                subprocess.run(restore_cmd, check=True, text=True)
+                print("✅ Sanitise workflow completed!")
+            except subprocess.CalledProcessError as e:
+                print(f"❌ Restore failed during sanitise workflow: {e.returncode}")
+                sys.exit(1)
+        
     except subprocess.CalledProcessError as e:
         backup_complete.set()
         progress_thread.join()

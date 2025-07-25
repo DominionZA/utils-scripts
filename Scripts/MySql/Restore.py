@@ -191,51 +191,31 @@ def restore_backup():
         except Exception as e:
             print(f"Warning: Error setting MySQL options: {e}")
         
+        current_statement = []
         try:
-            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore', buffering=1024*1024) as file:
-                buffer = ""
-                current_statement = ""
-                
-                while True:
-                    chunk = file.read(64*1024)  # Read 64KB at a time
-                    if not chunk:
-                        break
-                    
-                    buffer += chunk
-                    lines = buffer.split('\n')
-                    buffer = lines[-1]  # Keep incomplete line
-                    
-                    for line in lines[:-1]:
-                        line += '\n'  # Add back the newline
-                        if line.strip().endswith(';'):
-                            current_statement += line
-                            try:
-                                cursor.execute(current_statement)
-                                if re.search(r'CREATE\s+TABLE', current_statement, re.IGNORECASE):
-                                    restored_tables += 1
-                                    elapsed_time = int(time.time() - start_time)
-                                    hours, remainder = divmod(elapsed_time, 3600)
-                                    minutes, seconds = divmod(remainder, 60)
-                                    time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                                    print(f"\rTables restored: {restored_tables} | Time elapsed: {time_str}", end="", flush=True)
-                            except MySQLdb.Error as e:
-                                error_count += 1
-                                errors.append(str(e))
-                            except Exception as e:
-                                error_count += 1
-                                errors.append(str(e))
-                            current_statement = ""
-                        else:
-                            current_statement += line
-                
-                # Process any remaining statement
-                if current_statement.strip():
-                    try:
-                        cursor.execute(current_statement)
-                        if re.search(r'CREATE\s+TABLE', current_statement, re.IGNORECASE):
-                            restored_tables += 1
-                    except:
-                        pass
+            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as file:
+                for line in file:
+                    if line.strip().endswith(';'):
+                        current_statement.append(line)
+                        full_statement = ''.join(current_statement)
+                        try:
+                            cursor.execute(full_statement)
+                            if re.search(r'CREATE\s+TABLE', full_statement, re.IGNORECASE):
+                                restored_tables += 1
+                                elapsed_time = int(time.time() - start_time)
+                                hours, remainder = divmod(elapsed_time, 3600)
+                                minutes, seconds = divmod(remainder, 60)
+                                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                                print(f"\rTables restored: {restored_tables} | Time elapsed: {time_str}", end="", flush=True)
+                        except MySQLdb.Error as e:
+                            error_count += 1
+                            errors.append(str(e))
+                        except Exception as e:
+                            error_count += 1
+                            errors.append(str(e))
+                        current_statement = []
+                    else:
+                        current_statement.append(line)
         except Exception as e:
             print(f"\nWarning: Error reading restore file: {e}")
             print("Attempting to continue...")

@@ -8,7 +8,7 @@ isProd = True
 isTesting = False
 
 # SANITISE DATABASE - set to True to backup + setup Docker + restore (full workflow)
-sanitise_database = False
+sanitise_database = True
 
 def install_base_packages():
     """Install the base packages needed for package management."""

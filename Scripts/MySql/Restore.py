@@ -39,7 +39,7 @@ load_dotenv()
 
 # Rest of your original script starts here - manual file paths for standalone use
 RESTORE_FILE = r'C:\Temp\Backups\full_backup_20250724_102426.sql.gz'
-RESTORE_FILE = r'C:\Temp\Backups\ProdDump-Cleaned-20250723.sql'
+RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_131448.sql.gz'
 
 # Parse command line arguments
 def parse_arguments():

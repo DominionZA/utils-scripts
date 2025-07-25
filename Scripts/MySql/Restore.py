@@ -30,14 +30,15 @@ check_and_install_packages()
 import os
 import time
 import re 
-import argparse
+import argparse 
 from dotenv import load_dotenv
 import MySQLdb
+import msvcrt 
 
 # Load environment variables
 load_dotenv()
 
-# Rest of your original script starts here - manual file paths for standalone use 
+# Rest of your original script starts here - manual file paths for standalone use  
 RESTORE_FILE = r'C:\Temp\Backups\test-20250725_173620.sql'
 # RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_131448.sql'
 TESTING = True  # Skip prompts for testing
@@ -122,13 +123,12 @@ def drop_non_system_databases(cursor):
 
 def restore_backup():
     """
-    Parses the SQL file statement by statement, executes it, and waits for
-    user confirmation before proceeding to the next statement.
+    Parses, prints, and executes each SQL statement, waiting for user
+    confirmation before proceeding.
     """
     print(f"\nExecuting statements from: {RESTORE_FILE}")
     
     statement_count = 0
-    table_count = 0
     start_time = time.time()
     current_statement = []
     connection = None
@@ -144,54 +144,63 @@ def restore_backup():
         print("\nDropping non-system databases...")
         drop_non_system_databases(cursor)
 
-        with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                stripped_line = line.strip()
-                # Skip empty lines and single-line block comments
-                if not stripped_line or (stripped_line.startswith('/*') and stripped_line.endswith('*/;')):
-                    continue
-                
-                current_statement.append(line)
-                
-                # A simple check: if the trimmed line ends with ';', we
-                # consider the statement complete.
-                if stripped_line.endswith(';'):
-                    full_statement = ''.join(current_statement)
+        try:
+            print("\nDisabling foreign key checks for restore...")
+            cursor.execute("SET foreign_key_checks = 0;")
+
+            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    stripped_line = line.strip()
+                    # Skip empty lines and single-line block comments
+                    if not stripped_line or (stripped_line.startswith('/*') and stripped_line.endswith('*/;')):
+                        continue
                     
-                    statement_count += 1
+                    current_statement.append(line)
+                    
+                    # A simple check: if the trimmed line ends with ';', we
+                    # consider the statement complete.
+                    if stripped_line.endswith(';'):
+                        full_statement = ''.join(current_statement)
+                        
+                        statement_count += 1
+                        print(f"\n--- Statement {statement_count} ---")
+                        sys.stdout.write(full_statement)
+                        sys.stdout.flush()
 
-                    # Check for CREATE TABLE to show progress
-                    if re.search(r'\bCREATE\s+TABLE\b', full_statement, re.IGNORECASE):
-                        table_count += 1
-                        print(f"\rTables restored: {table_count}", end="", flush=True)
-
-                    # Execute the statement
-                    try:
-                        cursor.execute(full_statement)
-                        connection.commit()
-                    except MySQLdb.Error as e:
-                        # Print a newline to avoid overwriting the progress message
-                        print()
-                        print(f"\nERROR EXECUTING STATEMENT: {e}")
-                        print("Skipping to next statement.")
+                        # Execute the statement
                         try:
-                            connection.rollback()
-                        except MySQLdb.Error as rb_e:
-                            print(f"Could not rollback: {rb_e}")
-                    
-                    # Reset for the next statement
-                    current_statement = []
-        
-        print()  # Add a newline to move past the progress indicator
-        elapsed_time = time.time() - start_time
-        print(f"\n--- End of file ---")
-        
-        # Print any remaining content in the buffer
-        if current_statement:
-            print("\n--- Remaining partial statement (not executed) ---")
-            sys.stdout.write(''.join(current_statement))
+                            print("\n\nExecuting statement...")
+                            cursor.execute(full_statement)
+                            connection.commit()
+                            print("Statement executed successfully.")
+                        except MySQLdb.Error as e:
+                            print(f"\nERROR EXECUTING STATEMENT: {e}")
+                            print("Skipping to next statement.")
+                            try:
+                                connection.rollback()
+                            except MySQLdb.Error as rb_e:
+                                print(f"Could not rollback: {rb_e}")
+                        
+                        print("\n\nPress any key to continue...")
+                        msvcrt.getch()
 
-        print(f"\nSuccessfully processed {statement_count} statements and restored {table_count} tables in {elapsed_time:.2f} seconds.")
+                        # Reset for the next statement
+                        current_statement = []
+            
+            elapsed_time = time.time() - start_time
+            print(f"\n--- End of file ---")
+            
+            # Print any remaining content in the buffer
+            if current_statement:
+                print("\n--- Remaining partial statement (not executed) ---")
+                sys.stdout.write(''.join(current_statement))
+
+            print(f"\nSuccessfully processed {statement_count} statements in {elapsed_time:.2f} seconds.")
+        
+        finally:
+            print("\nRe-enabling foreign key checks...")
+            cursor.execute("SET foreign_key_checks = 1;")
+            connection.commit()
 
     except FileNotFoundError:
         print(f"\nError: Restore file not found: {RESTORE_FILE}")

@@ -79,7 +79,7 @@ os.makedirs(backup_dir, exist_ok=True)
 
 # Generate backup filename
 timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-backup_file = os.path.join(backup_dir, f'{environment.lower()}-{timestamp}.sql.gz')
+backup_file = os.path.join(backup_dir, f'{environment.lower()}-{timestamp}.sql')
 
 # Path to mysqldump from environment variable
 MYSQL_DUMP_PATH = os.getenv('MYSQL_DUMP_PATH', r"C:\Program Files\MySQL\MySQL Workbench 8.0 CE\mysqldump.exe")

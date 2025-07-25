@@ -224,7 +224,8 @@ def restore_backup():
                             full_statement = ''.join(current_statement)
                             try:
                                 cursor.execute(full_statement)
-                                if re.search(r'CREATE\s+TABLE', full_statement, re.IGNORECASE):
+                                # Faster string check instead of regex
+                                if 'CREATE TABLE' in full_statement.upper():
                                     restored_tables += 1
                                     elapsed_time = int(time.time() - start_time)
                                     hours, remainder = divmod(elapsed_time, 3600)
@@ -248,7 +249,7 @@ def restore_backup():
                         full_statement = ''.join(current_statement)
                         try:
                             cursor.execute(full_statement)
-                            if re.search(r'CREATE\s+TABLE', full_statement, re.IGNORECASE):
+                            if 'CREATE TABLE' in full_statement.upper():
                                 restored_tables += 1
                         except:
                             pass

@@ -190,12 +190,24 @@ def restore_backup():
             connection.autocommit(False)
             
             # MySQL performance optimizations for large restores
-            cursor.execute("SET unique_checks = 0")
-            cursor.execute("SET sql_log_bin = 0") 
-            cursor.execute("SET innodb_flush_log_at_trx_commit = 0")
-            cursor.execute("SET sync_binlog = 0")
-            cursor.execute("SET max_allowed_packet = 1073741824")  # 1GB
-            print("MySQL performance optimizations applied")
+            optimizations = [
+                ("SET unique_checks = 0", "Unique checks disabled"),
+                ("SET sql_log_bin = 0", "Binary logging disabled"), 
+                ("SET max_allowed_packet = 1073741824", "Max packet size increased"),
+                ("SET innodb_flush_log_at_trx_commit = 2", "InnoDB log flushing optimized"),
+                ("SET sync_binlog = 0", "Sync binlog disabled")
+            ]
+            
+            applied_count = 0
+            for setting, description in optimizations:
+                try:
+                    cursor.execute(setting)
+                    applied_count += 1
+                except Exception as e:
+                    # Silently continue if setting fails
+                    pass
+            
+            print(f"Applied {applied_count}/{len(optimizations)} MySQL performance optimizations")
         except Exception as e:
             print(f"Warning: Error setting MySQL options: {e}")
         

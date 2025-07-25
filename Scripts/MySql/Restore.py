@@ -33,7 +33,6 @@ import re
 import argparse
 from dotenv import load_dotenv
 import MySQLdb
-import msvcrt
 
 # Load environment variables
 load_dotenv()
@@ -103,6 +102,24 @@ def print_config_and_prompt():
         else:
             print("Please enter 'yes' or 'no'.")
 
+def drop_non_system_databases(cursor):
+    """Drops all non-system databases."""
+    system_databases = ['mysql', 'information_schema', 'performance_schema', 'sys']
+    
+    # Disable foreign key checks
+    cursor.execute("SET foreign_key_checks = 0;")
+    
+    cursor.execute("SHOW DATABASES;")
+    databases = cursor.fetchall()
+    for (database,) in databases:
+        if database not in system_databases:
+            print(f"Dropping database: {database}")
+            cursor.execute(f"DROP DATABASE IF EXISTS `{database}`;")
+    
+    # Re-enable foreign key checks
+    cursor.execute("SET foreign_key_checks = 1;")
+    print("Finished dropping databases.")
+
 def restore_backup():
     """
     Parses the SQL file statement by statement, executes it, and waits for
@@ -111,6 +128,7 @@ def restore_backup():
     print(f"\nExecuting statements from: {RESTORE_FILE}")
     
     statement_count = 0
+    table_count = 0
     start_time = time.time()
     current_statement = []
     connection = None
@@ -121,6 +139,10 @@ def restore_backup():
         connection = MySQLdb.connect(**config)
         cursor = connection.cursor()
         print("Connection successful.")
+
+        # Drop all non-system databases before restore
+        print("\nDropping non-system databases...")
+        drop_non_system_databases(cursor)
 
         with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
@@ -137,17 +159,19 @@ def restore_backup():
                     full_statement = ''.join(current_statement)
                     
                     statement_count += 1
-                    print(f"\n--- Statement {statement_count} ---")
-                    sys.stdout.write(full_statement)
-                    sys.stdout.flush()
+
+                    # Check for CREATE TABLE to show progress
+                    if re.search(r'\bCREATE\s+TABLE\b', full_statement, re.IGNORECASE):
+                        table_count += 1
+                        print(f"\rTables restored: {table_count}", end="", flush=True)
 
                     # Execute the statement
                     try:
-                        print("\n\nExecuting statement...")
                         cursor.execute(full_statement)
                         connection.commit()
-                        print("Statement executed successfully.")
                     except MySQLdb.Error as e:
+                        # Print a newline to avoid overwriting the progress message
+                        print()
                         print(f"\nERROR EXECUTING STATEMENT: {e}")
                         print("Skipping to next statement.")
                         try:
@@ -155,12 +179,10 @@ def restore_backup():
                         except MySQLdb.Error as rb_e:
                             print(f"Could not rollback: {rb_e}")
                     
-                    print("\nPress any key to continue...")
-                    msvcrt.getch()
-
                     # Reset for the next statement
                     current_statement = []
         
+        print()  # Add a newline to move past the progress indicator
         elapsed_time = time.time() - start_time
         print(f"\n--- End of file ---")
         
@@ -169,7 +191,7 @@ def restore_backup():
             print("\n--- Remaining partial statement (not executed) ---")
             sys.stdout.write(''.join(current_statement))
 
-        print(f"\nSuccessfully processed {statement_count} statements in {elapsed_time:.2f} seconds.")
+        print(f"\nSuccessfully processed {statement_count} statements and restored {table_count} tables in {elapsed_time:.2f} seconds.")
 
     except FileNotFoundError:
         print(f"\nError: Restore file not found: {RESTORE_FILE}")

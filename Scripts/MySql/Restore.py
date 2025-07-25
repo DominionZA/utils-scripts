@@ -135,7 +135,7 @@ def restore_backup():
         drop_non_system_databases(cursor)
         cursor.close()
         connection.close()
-        print("Database cleared. Proceeding with restore.")
+        print("\nDatabase cleared. Proceeding with restore.")
 
         # Step 2: Use mysql.exe for the high-performance restore
         print(f"\nStarting database restore from {RESTORE_FILE}...")

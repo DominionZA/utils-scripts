@@ -191,31 +191,67 @@ def restore_backup():
         except Exception as e:
             print(f"Warning: Error setting MySQL options: {e}")
         
+        print("Starting optimized file processing...")
+        
+        # Use larger buffer for faster I/O, process in bigger chunks
+        CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks
         current_statement = []
+        
         try:
-            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as file:
-                for line in file:
-                    if line.strip().endswith(';'):
-                        current_statement.append(line)
+            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore', buffering=CHUNK_SIZE) as file:
+                print("File opened with 8MB buffer. Beginning SQL execution...")
+                
+                buffer = ""
+                processed_bytes = 0
+                
+                while True:
+                    chunk = file.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    
+                    buffer += chunk
+                    processed_bytes += len(chunk)
+                    
+                    # Process complete lines from buffer
+                    lines = buffer.split('\n')
+                    buffer = lines[-1]  # Keep incomplete line for next iteration
+                    
+                    for line in lines[:-1]:  # Process all complete lines
+                        line += '\n'  # Add back the newline
+                        
+                        if line.strip().endswith(';'):
+                            current_statement.append(line)
+                            full_statement = ''.join(current_statement)
+                            try:
+                                cursor.execute(full_statement)
+                                if re.search(r'CREATE\s+TABLE', full_statement, re.IGNORECASE):
+                                    restored_tables += 1
+                                    elapsed_time = int(time.time() - start_time)
+                                    hours, remainder = divmod(elapsed_time, 3600)
+                                    minutes, seconds = divmod(remainder, 60)
+                                    time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                                    print(f"\rTables restored: {restored_tables} | Time elapsed: {time_str}", end="", flush=True)
+                            except MySQLdb.Error as e:
+                                error_count += 1
+                                errors.append(str(e))
+                            except Exception as e:
+                                error_count += 1
+                                errors.append(str(e))
+                            current_statement = []
+                        else:
+                            current_statement.append(line)
+                
+                # Process any remaining buffer content
+                if buffer.strip():
+                    if buffer.strip().endswith(';'):
+                        current_statement.append(buffer)
                         full_statement = ''.join(current_statement)
                         try:
                             cursor.execute(full_statement)
                             if re.search(r'CREATE\s+TABLE', full_statement, re.IGNORECASE):
                                 restored_tables += 1
-                                elapsed_time = int(time.time() - start_time)
-                                hours, remainder = divmod(elapsed_time, 3600)
-                                minutes, seconds = divmod(remainder, 60)
-                                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                                print(f"\rTables restored: {restored_tables} | Time elapsed: {time_str}", end="", flush=True)
-                        except MySQLdb.Error as e:
-                            error_count += 1
-                            errors.append(str(e))
-                        except Exception as e:
-                            error_count += 1
-                            errors.append(str(e))
-                        current_statement = []
-                    else:
-                        current_statement.append(line)
+                        except:
+                            pass
         except Exception as e:
             print(f"\nWarning: Error reading restore file: {e}")
             print("Attempting to continue...")

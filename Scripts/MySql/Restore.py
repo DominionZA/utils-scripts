@@ -147,6 +147,7 @@ def restore_backup():
             f"--host={config['host']}",
             f"--port={config['port']}",
             f"--user={config['user']}",
+            "--verbose", # Ask for verbose output to create a feedback loop
             "mysql"  # Connect to default 'mysql' db to resolve "No database selected"
         ]
         
@@ -162,11 +163,20 @@ def restore_backup():
                 stderr=subprocess.PIPE,
                 env=env,
                 text=True,
+                encoding='utf-8',
+                errors='ignore',
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             
-            # Wait for the process to complete and capture output
-            stdout, stderr = process.communicate()
+            # Read stdout line by line to provide live feedback, then get stderr
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+            
+            # Wait for the process to complete and capture any final error output
+            stderr_output = process.stderr.read() if process.stderr else ""
+            process.wait()
 
         elapsed_time = int(time.time() - start_time)
         hours, remainder = divmod(elapsed_time, 3600)
@@ -175,15 +185,15 @@ def restore_backup():
 
         if process.returncode == 0:
             print(f"\nDatabase restore completed successfully in {time_str}.")
-            if stderr:
+            if stderr_output:
                 print("Warnings from mysql client:")
-                print(stderr)
+                print(stderr_output)
         else:
             print(f"\nDatabase restore FAILED after {time_str}.")
             print(f"Return code: {process.returncode}")
-            if stderr:
+            if stderr_output:
                 print("Error details from mysql client:")
-                print(stderr)
+                print(stderr_output)
             sys.exit(1)
 
     except FileNotFoundError:

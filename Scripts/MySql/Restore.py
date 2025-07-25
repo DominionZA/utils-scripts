@@ -28,12 +28,12 @@ check_and_install_packages()
 
 # Now import the required packages
 import os
-import time
+import time 
 import re 
 import argparse 
 from dotenv import load_dotenv
 import MySQLdb
-import msvcrt 
+import collections
 
 # Load environment variables
 load_dotenv()
@@ -128,10 +128,11 @@ def restore_backup():
     """
     print(f"\nExecuting statements from: {RESTORE_FILE}")
     
-    statement_count = 0
+    table_count = 0
     start_time = time.time()
     current_statement = []
     connection = None
+    recent_lines = collections.deque(maxlen=200)
     
     try:
         # Establish a single, persistent database connection
@@ -150,43 +151,58 @@ def restore_backup():
 
             with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
+                    recent_lines.append(line)
                     stripped_line = line.strip()
-                    # Skip empty lines and single-line block comments
-                    if not stripped_line or (stripped_line.startswith('/*') and stripped_line.endswith('*/;')):
+                    # Skip empty lines and whole-line comments
+                    if not stripped_line or stripped_line.startswith('--') or stripped_line.startswith('#') or (stripped_line.startswith('/*') and stripped_line.endswith('*/;')):
                         continue
                     
                     current_statement.append(line)
                     
-                    # A simple check: if the trimmed line ends with ';', we
-                    # consider the statement complete.
-                    if stripped_line.endswith(';'):
+                    # Create a version of the line with inline comments removed
+                    # for the sole purpose of checking for the semicolon.
+                    line_for_check = stripped_line
+                    if '#' in line_for_check:
+                        line_for_check = line_for_check.split('#', 1)[0].strip()
+                    if '--' in line_for_check:
+                        line_for_check = line_for_check.split('--', 1)[0].strip()
+
+                    # Check if the cleaned line ends with ';'.
+                    if line_for_check.endswith(';'):
                         full_statement = ''.join(current_statement)
                         
-                        statement_count += 1
-                        print(f"\n--- Statement {statement_count} ---")
-                        sys.stdout.write(full_statement)
-                        sys.stdout.flush()
+                        # If the statement is just a semicolon or whitespace, skip it
+                        if not full_statement.strip() or full_statement.strip() == ';':
+                            current_statement = []
+                            continue
+
+                        # Check for CREATE TABLE to show progress
+                        if re.search(r'\bCREATE\s+TABLE\b', full_statement, re.IGNORECASE):
+                            table_count += 1
+                            print(f"\rTables restored: {table_count}", end="", flush=True)
 
                         # Execute the statement
                         try:
-                            print("\n\nExecuting statement...")
                             cursor.execute(full_statement)
                             connection.commit()
-                            print("Statement executed successfully.")
                         except MySQLdb.Error as e:
-                            print(f"\nERROR EXECUTING STATEMENT: {e}")
-                            print("Skipping to next statement.")
-                            try:
-                                connection.rollback()
-                            except MySQLdb.Error as rb_e:
-                                print(f"Could not rollback: {rb_e}")
-                        
-                        print("\n\nPress any key to continue...")
-                        msvcrt.getch()
-
-                        # Reset for the next statement
-                        current_statement = []
+                            # Print a newline to avoid overwriting the progress message
+                            print()
+                            print("\n--- LAST 200 LINES READ ---")
+                            for recent_line in recent_lines:
+                                sys.stdout.write(recent_line)
+                            print("---------------------------")
+                            print("\n--- FAILED SQL STATEMENT ---")
+                            sys.stdout.write(full_statement)
+                            sys.stdout.flush()
+                            print(f"\n\n--- MYSQL ERROR ---\n{e}")
+                            print("\nRestore aborted due to error.")
+                            return # Exit the function, allowing 'finally' to clean up
+                    
+                    # Reset for the next statement
+                    current_statement = []
             
+            print() # Add a newline to move past the progress counter
             elapsed_time = time.time() - start_time
             print(f"\n--- End of file ---")
             
@@ -195,7 +211,7 @@ def restore_backup():
                 print("\n--- Remaining partial statement (not executed) ---")
                 sys.stdout.write(''.join(current_statement))
 
-            print(f"\nSuccessfully processed {statement_count} statements in {elapsed_time:.2f} seconds.")
+            print(f"\nSuccessfully processed and restored {table_count} tables in {elapsed_time:.2f} seconds.")
         
         finally:
             print("\nRe-enabling foreign key checks...")

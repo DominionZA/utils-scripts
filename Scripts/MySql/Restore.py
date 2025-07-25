@@ -38,8 +38,8 @@ import MySQLdb
 load_dotenv()
 
 # Rest of your original script starts here - manual file paths for standalone use
-RESTORE_FILE = r'C:\Temp\Backups\full_backup_20250724_102426.sql.gz'
-RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_131448.sql.gz'
+RESTORE_FILE = r'C:\Temp\Backups\full_backup_20250724_102426.sql'
+# RESTORE_FILE = r'C:\Temp\Backups\ProdDump-Cleaned-20250723.sql'
 
 # Parse command line arguments
 def parse_arguments():
@@ -179,19 +179,6 @@ def restore_backup():
             print(f"Warning: Error creating users: {e}")
             print("Continuing with restore...")
         
-        # Count total number of CREATE TABLE statements
-        total_tables = 0
-        try:
-            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as file:
-                for line in file:
-                    if re.search(r'CREATE\s+TABLE', line, re.IGNORECASE):
-                        total_tables += 1
-        except Exception as e:
-            print(f"Warning: Error counting tables: {e}")
-            total_tables = 1  # Set a default value to avoid division by zero
-        
-        print(f"Total tables to restore: {total_tables}")
-        
         start_time = time.time()
         restored_tables = 0
         error_count = 0
@@ -215,12 +202,11 @@ def restore_backup():
                             cursor.execute(full_statement)
                             if re.search(r'CREATE\s+TABLE', full_statement, re.IGNORECASE):
                                 restored_tables += 1
-                                progress = (restored_tables / total_tables) * 100 if total_tables > 0 else 0
                                 elapsed_time = int(time.time() - start_time)
                                 hours, remainder = divmod(elapsed_time, 3600)
                                 minutes, seconds = divmod(remainder, 60)
                                 time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                                print(f"\rRestore Progress: {progress:.2f}% | Tables restored: {restored_tables}/{total_tables} | Time elapsed: {time_str}", end="", flush=True)
+                                print(f"\rTables restored: {restored_tables} | Time elapsed: {time_str}", end="", flush=True)
                         except MySQLdb.Error as e:
                             error_count += 1
                             errors.append(str(e))

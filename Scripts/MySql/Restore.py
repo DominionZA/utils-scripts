@@ -188,6 +188,14 @@ def restore_backup():
         try:
             cursor.execute("SET foreign_key_checks = 0")
             connection.autocommit(False)
+            
+            # MySQL performance optimizations for large restores
+            cursor.execute("SET unique_checks = 0")
+            cursor.execute("SET sql_log_bin = 0") 
+            cursor.execute("SET innodb_flush_log_at_trx_commit = 0")
+            cursor.execute("SET sync_binlog = 0")
+            cursor.execute("SET max_allowed_packet = 1073741824")  # 1GB
+            print("MySQL performance optimizations applied")
         except Exception as e:
             print(f"Warning: Error setting MySQL options: {e}")
         
@@ -195,7 +203,9 @@ def restore_backup():
         
         # Use larger buffer for faster I/O, process in bigger chunks
         CHUNK_SIZE = 8 * 1024 * 1024  # 8MB chunks
+        BATCH_SIZE = 1000  # Commit every 1000 statements
         current_statement = []
+        statements_executed = 0
         
         try:
             with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore', buffering=CHUNK_SIZE) as file:
@@ -224,6 +234,12 @@ def restore_backup():
                             full_statement = ''.join(current_statement)
                             try:
                                 cursor.execute(full_statement)
+                                statements_executed += 1
+                                
+                                # Batch commit for better performance
+                                if statements_executed % BATCH_SIZE == 0:
+                                    connection.commit()
+                                
                                 # Faster string check instead of regex
                                 if 'CREATE TABLE' in full_statement.upper():
                                     restored_tables += 1

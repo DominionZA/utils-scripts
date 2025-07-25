@@ -34,6 +34,18 @@ import argparse
 from dotenv import load_dotenv
 import MySQLdb
 
+# --- Cursor Control Functions ---
+def hide_cursor():
+    """Hides the console cursor using ANSI escape codes."""
+    sys.stdout.write("\x1b[?25l")
+    sys.stdout.flush()
+
+def show_cursor():
+    """Shows the console cursor using ANSI escape codes."""
+    sys.stdout.write("\x1b[?25h")
+    sys.stdout.flush()
+# --------------------------------
+
 # Load environment variables
 load_dotenv()
 
@@ -138,8 +150,12 @@ def restore_backup():
         print("\nDatabase cleared. Proceeding with restore.")
 
         # Step 2: Use mysql.exe for the high-performance restore
-        print(f"\nStarting database restore from {RESTORE_FILE}...")
+        filename_only = os.path.basename(RESTORE_FILE)
+        print(f"\nStarting database restore from {filename_only} to {config['host']}:{config['port']}")
         start_time = time.time()
+        
+        hide_cursor() # Hide cursor before the restore process starts
+
         mysql_path = args.mysql_path or os.getenv('MYSQL_EXE_PATH') or 'mysql'
 
         command = [
@@ -168,23 +184,28 @@ def restore_backup():
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
             )
             
-            # Read stdout line by line to provide live feedback, then get stderr
+            # Show a timer to indicate activity without printing the full log
             if process.stdout:
-                for line in iter(process.stdout.readline, ''):
-                    sys.stdout.write(line)
+                while process.stdout.readline():
+                    elapsed = int(time.time() - start_time)
+                    minutes, seconds = divmod(elapsed, 60)
+                    time_str = f"{minutes:02d}:{seconds:02d}"
+                    sys.stdout.write(f'\rRestoring: {time_str}')
                     sys.stdout.flush()
             
             # Wait for the process to complete and capture any final error output
             stderr_output = process.stderr.read() if process.stderr else ""
             process.wait()
 
+        # Overwrite the timer line with a final status message
         elapsed_time = int(time.time() - start_time)
         hours, remainder = divmod(elapsed_time, 3600)
         minutes, seconds = divmod(remainder, 60)
         time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
         if process.returncode == 0:
-            print(f"\nDatabase restore completed successfully in {time_str}.")
+            # Add padding with spaces to ensure the previous line is fully overwritten
+            print(f"\rDatabase restore completed successfully in {time_str}.          ")
             if stderr_output:
                 print("Warnings from mysql client:")
                 print(stderr_output)
@@ -208,6 +229,7 @@ def restore_backup():
         print(f"\nAn unexpected error occurred: {e}")
         sys.exit(1)
     finally:
+        show_cursor() # Always show the cursor at the very end
         # This is for the python connection, which should be closed already,
         # but it's good practice to have it just in case of an early exit.
         if connection and connection.open:

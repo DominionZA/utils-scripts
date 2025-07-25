@@ -1,13 +1,8 @@
 import sys
 import subprocess
 
-# Configuration variable - set to True for production backup, False for test backup
-isProd = True
-
-# TESTING FLAG - set to True to test restore integration instead of doing backup
+isProd = False
 isTesting = False
-
-# SANITISE DATABASE - set to True to backup + setup Docker + restore (full workflow)
 sanitise_database = True
 
 def install_base_packages():
@@ -318,6 +313,12 @@ if __name__ == "__main__":
     try:
         with open(backup_file, 'wb') as f:
             for db in databases:
+                # Manually add CREATE DATABASE and USE statements for each database
+                # This ensures schema is preserved and is version-agnostic.
+                f.write(f"CREATE DATABASE IF NOT EXISTS `{db}`;\n".encode('utf-8'))
+                f.write(f"USE `{db}`;\n".encode('utf-8'))
+                f.flush()  # Force python's buffer to write to the file
+
                 # Get only tables (not views) from this database
                 cursor.execute(f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{db}' AND table_type = 'BASE TABLE'")
                 tables = [table[0] for table in cursor.fetchall()]
@@ -326,6 +327,9 @@ if __name__ == "__main__":
                 if db == 'aura_cloud_device' and 'PingHistory' in tables:
                     tables.remove('PingHistory')
                 
+                if not tables:
+                    continue # Skip if there are no tables to back up in this database
+
                 # Constructing mysqldump command for the current database with specific tables
                 mysqldump_cmd = [
                     MYSQL_DUMP_PATH,
@@ -345,7 +349,7 @@ if __name__ == "__main__":
                     '--tables'              # Tables flag
                 ] + tables                  # Add specific table names
 
-                # Run the mysqldump command for the current database
+                # Run the mysqldump command and append output to the file
                 subprocess.run(mysqldump_cmd, stdout=f, stderr=subprocess.PIPE, check=True)
         
         backup_complete.set()

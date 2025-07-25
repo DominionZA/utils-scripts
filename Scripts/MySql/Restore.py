@@ -29,10 +29,11 @@ check_and_install_packages()
 # Now import the required packages
 import os
 import time
-import re
+import re 
 import argparse
 from dotenv import load_dotenv
 import MySQLdb
+import msvcrt
 
 # Load environment variables
 load_dotenv()
@@ -40,6 +41,7 @@ load_dotenv()
 # Rest of your original script starts here - manual file paths for standalone use
 RESTORE_FILE = r'C:\Temp\Backups\full_backup_20250724_102426.sql'
 RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_131448.sql'
+TESTING = True  # Skip prompts for testing
 
 # Parse command line arguments
 def parse_arguments():
@@ -50,6 +52,7 @@ def parse_arguments():
     parser.add_argument('--password', help='MySQL password (default: from MYSQL_LOCAL_PASSWORD env var)')
     parser.add_argument('--file', help='Backup file path to restore (required)')
     parser.add_argument('--auto-confirm', action='store_true', help='Skip confirmation prompt')
+    parser.add_argument('--mysql-path', help='Path to the mysql command-line executable.')
     return parser.parse_args()
 
 # Parse arguments
@@ -83,9 +86,12 @@ def print_config_and_prompt():
     print(f"Password: {'*' * len(config['password']) if config['password'] else 'None'}")
     print(f"Restore file: {RESTORE_FILE}")
     
-    # Skip prompt if auto-confirm is set
-    if args.auto_confirm:
-        print("\nAuto-confirm enabled. Proceeding with restore...")
+    # Skip prompt if auto-confirm is set or if in testing mode
+    if args.auto_confirm or TESTING:
+        if TESTING:
+            print("\nTesting mode enabled. Auto-confirming...")
+        else:  # auto-confirm was used
+            print("\nAuto-confirm enabled. Proceeding with restore...")
         return True
     
     while True:
@@ -97,167 +103,64 @@ def print_config_and_prompt():
         else:
             print("Please enter 'yes' or 'no'.")
 
-def ensure_users_exist(cursor):
-    users = ['frank', 'admin', 'aura']
-    password = 'P@ssw0rd1'
-    for user in users:
-        cursor.execute(f"CREATE USER IF NOT EXISTS '{user}'@'%' IDENTIFIED BY '{password}';")
-        cursor.execute(f"GRANT ALL PRIVILEGES ON *.* TO '{user}'@'%' WITH GRANT OPTION;")
-    cursor.execute("FLUSH PRIVILEGES;")
-
-def ensure_pinghistory_table_exists(cursor):
-    """Check if aura_cloud_device.PingHistory table exists and create it if not."""
-    try:
-        # Check if the table exists
-        cursor.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'aura_cloud_device' AND table_name = 'PingHistory'")
-        table_exists = cursor.fetchone()[0] > 0
-        
-        if not table_exists:
-            print("\nPingHistory table not found. Creating table...")
-            
-            # Create the table
-            create_table_sql = """
-            CREATE TABLE aura_cloud_device.PingHistory (
-              Id bigint UNSIGNED NOT NULL AUTO_INCREMENT,
-              DeviceId int NOT NULL,
-              Time datetime NOT NULL,
-              PRIMARY KEY (Id)
-            )
-            ENGINE = INNODB,
-            AUTO_INCREMENT = 11857178,
-            AVG_ROW_LENGTH = 59,
-            CHARACTER SET utf8mb4,
-            COLLATE utf8mb4_0900_ai_ci
-            """
-            cursor.execute(create_table_sql)
-            
-            # Add the index
-            cursor.execute("ALTER TABLE aura_cloud_device.PingHistory ADD INDEX IDX_PingHistory (DeviceId, Time)")
-            
-            # Add the foreign key constraint
-            cursor.execute("ALTER TABLE aura_cloud_device.PingHistory ADD CONSTRAINT FK_PingHistory_DeviceId FOREIGN KEY (DeviceId) REFERENCES aura_cloud_device.Device (Id)")
-            
-            print("PingHistory table created successfully.")
-        else:
-            print("PingHistory table already exists.")
-            
-    except Exception as e:
-        print(f"Warning: Error checking/creating PingHistory table: {e}")
-
-def drop_non_system_databases(cursor):
-    system_databases = ['mysql', 'information_schema', 'performance_schema', 'sys']
-    
-    # Disable foreign key checks
-    cursor.execute("SET foreign_key_checks = 0;")
-    
-    cursor.execute("SHOW DATABASES;")
-    databases = cursor.fetchall()
-    for (database,) in databases:
-        if database not in system_databases:
-            print(f"Dropping database: {database}")
-            cursor.execute(f"DROP DATABASE IF EXISTS `{database}`;")
-    
-    # Re-enable foreign key checks
-    cursor.execute("SET foreign_key_checks = 1;")
-
 def restore_backup():
+    """
+    Parses the SQL file statement by statement and prints each complete
+    statement. A statement is considered complete when a line ends with a
+    semicolon.
+    """
+    print(f"\nParsing statements from: {RESTORE_FILE}")
+    
+    statement_count = 0
+    start_time = time.time()
+    current_statement = []
+    
     try:
-        connection = MySQLdb.connect(**config)
-        cursor = connection.cursor()
+        with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                stripped_line = line.strip()
+                # Skip empty lines and single-line block comments
+                if not stripped_line or (stripped_line.startswith('/*') and stripped_line.endswith('*/;')):
+                    continue
+                
+                current_statement.append(line)
+                
+                # A simple check: if the trimmed line ends with ';', we
+                # consider the statement complete.
+                if stripped_line.endswith(';'):
+                    full_statement = ''.join(current_statement)
+                    
+                    statement_count += 1
+                    print(f"\n--- Statement {statement_count} ---")
+                    sys.stdout.write(full_statement)
+                    sys.stdout.flush()
+                    
+                    print("\n\nPress any key to continue...")
+                    msvcrt.getch()
+
+                    # Reset for the next statement
+                    current_statement = []
         
-        # Drop all non-system databases
-        try:
-            drop_non_system_databases(cursor)
-        except Exception as e:
-            print(f"Warning: Error dropping databases: {e}")
-            print("Continuing with restore...")
+        elapsed_time = time.time() - start_time
+        print(f"\n--- End of file ---")
         
-        # Ensure users exist with full DBA access
-        try:
-            ensure_users_exist(cursor)
-        except Exception as e:
-            print(f"Warning: Error creating users: {e}")
-            print("Continuing with restore...")
-        
-        start_time = time.time()
-        restored_tables = 0
-        error_count = 0
-        errors = []
-        
-        # Disable foreign key checks and autocommit
-        try:
-            cursor.execute("SET foreign_key_checks = 0")
-            connection.autocommit(False)
-        except Exception as e:
-            print(f"Warning: Error setting MySQL options: {e}")
-        
-        current_statement = []
-        try:
-            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as file:
-                for line in file:
-                    if line.strip().endswith(';'):
-                        current_statement.append(line)
-                        full_statement = ''.join(current_statement)
-                        try:
-                            cursor.execute(full_statement)
-                            if re.search(r'CREATE\s+TABLE', full_statement, re.IGNORECASE):
-                                restored_tables += 1
-                                elapsed_time = int(time.time() - start_time)
-                                hours, remainder = divmod(elapsed_time, 3600)
-                                minutes, seconds = divmod(remainder, 60)
-                                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                                print(f"\rTables restored: {restored_tables} | Time elapsed: {time_str}", end="", flush=True)
-                        except MySQLdb.Error as e:
-                            error_count += 1
-                            errors.append(str(e))
-                        except Exception as e:
-                            error_count += 1
-                            errors.append(str(e))
-                        current_statement = []
-                    else:
-                        current_statement.append(line)
-        except Exception as e:
-            print(f"\nWarning: Error reading restore file: {e}")
-            print("Attempting to continue...")
-        
-        # Re-enable foreign key checks and commit
-        try:
-            cursor.execute("SET foreign_key_checks = 1")
-            connection.commit()
-        except Exception as e:
-            print(f"\nWarning: Error finalizing restore: {e}")
-        
-        # Ensure PingHistory table exists after restore
-        try:
-            print()  # Add newline after progress display
-            ensure_pinghistory_table_exists(cursor)
-            connection.commit()
-        except Exception as e:
-            print(f"Warning: Error ensuring PingHistory table after restore: {e}")
-        
-        try:
-            cursor.close()
-            connection.close()
-        except Exception as e:
-            print(f"\nWarning: Error closing connection: {e}")
-        
-        print(f"\nDatabase restore completed from {RESTORE_FILE}")
-        print(f"Tables restored: {restored_tables}")
-        if error_count > 0:
-            print(f"Total errors encountered (statements skipped): {error_count}")
-            print("\nErrors encountered during restore:")
-            for error in errors:
-                print(f"  - {error}")
-        else:
-            print("No errors encountered during restore")
-            
+        # Print any remaining content in the buffer (if the file doesn't end with ';')
+        if current_statement:
+            print("\n--- Remaining partial statement ---")
+            sys.stdout.write(''.join(current_statement))
+
+        print(f"\nSuccessfully parsed and printed {statement_count} statements in {elapsed_time:.2f} seconds.")
+
+    except FileNotFoundError:
+        print(f"\nError: Restore file not found: {RESTORE_FILE}")
+        sys.exit(1)
     except Exception as e:
-        print(f"\nWarning: An error occurred during restore: {e}")
-        print("The restore process has completed with potential issues.")
-        # Don't exit or raise - just log and continue
+        print(f"\nAn error occurred while parsing the file: {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     if print_config_and_prompt():
         restore_backup()
     else:
-        print("Restore operation aborted.")
+        print("Operation aborted.")

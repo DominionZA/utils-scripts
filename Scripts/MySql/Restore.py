@@ -38,9 +38,9 @@ import msvcrt
 # Load environment variables
 load_dotenv()
 
-# Rest of your original script starts here - manual file paths for standalone use
-RESTORE_FILE = r'C:\Temp\Backups\full_backup_20250724_102426.sql'
-RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_131448.sql'
+# Rest of your original script starts here - manual file paths for standalone use 
+RESTORE_FILE = r'C:\Temp\Backups\test-20250725_173620.sql'
+# RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_131448.sql'
 TESTING = True  # Skip prompts for testing
 
 # Parse command line arguments
@@ -105,17 +105,23 @@ def print_config_and_prompt():
 
 def restore_backup():
     """
-    Parses the SQL file statement by statement and prints each complete
-    statement. A statement is considered complete when a line ends with a
-    semicolon.
+    Parses the SQL file statement by statement, executes it, and waits for
+    user confirmation before proceeding to the next statement.
     """
-    print(f"\nParsing statements from: {RESTORE_FILE}")
+    print(f"\nExecuting statements from: {RESTORE_FILE}")
     
     statement_count = 0
     start_time = time.time()
     current_statement = []
+    connection = None
     
     try:
+        # Establish a single, persistent database connection
+        print("Connecting to database...")
+        connection = MySQLdb.connect(**config)
+        cursor = connection.cursor()
+        print("Connection successful.")
+
         with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 stripped_line = line.strip()
@@ -134,8 +140,22 @@ def restore_backup():
                     print(f"\n--- Statement {statement_count} ---")
                     sys.stdout.write(full_statement)
                     sys.stdout.flush()
+
+                    # Execute the statement
+                    try:
+                        print("\n\nExecuting statement...")
+                        cursor.execute(full_statement)
+                        connection.commit()
+                        print("Statement executed successfully.")
+                    except MySQLdb.Error as e:
+                        print(f"\nERROR EXECUTING STATEMENT: {e}")
+                        print("Skipping to next statement.")
+                        try:
+                            connection.rollback()
+                        except MySQLdb.Error as rb_e:
+                            print(f"Could not rollback: {rb_e}")
                     
-                    print("\n\nPress any key to continue...")
+                    print("\nPress any key to continue...")
                     msvcrt.getch()
 
                     # Reset for the next statement
@@ -144,19 +164,26 @@ def restore_backup():
         elapsed_time = time.time() - start_time
         print(f"\n--- End of file ---")
         
-        # Print any remaining content in the buffer (if the file doesn't end with ';')
+        # Print any remaining content in the buffer
         if current_statement:
-            print("\n--- Remaining partial statement ---")
+            print("\n--- Remaining partial statement (not executed) ---")
             sys.stdout.write(''.join(current_statement))
 
-        print(f"\nSuccessfully parsed and printed {statement_count} statements in {elapsed_time:.2f} seconds.")
+        print(f"\nSuccessfully processed {statement_count} statements in {elapsed_time:.2f} seconds.")
 
     except FileNotFoundError:
         print(f"\nError: Restore file not found: {RESTORE_FILE}")
         sys.exit(1)
-    except Exception as e:
-        print(f"\nAn error occurred while parsing the file: {e}")
+    except MySQLdb.Error as e:
+        print(f"\nA critical database error occurred: {e}")
         sys.exit(1)
+    except Exception as e:
+        print(f"\nAn unexpected error occurred: {e}")
+        sys.exit(1)
+    finally:
+        if connection:
+            connection.close()
+            print("\nDatabase connection closed.")
 
 
 if __name__ == "__main__":

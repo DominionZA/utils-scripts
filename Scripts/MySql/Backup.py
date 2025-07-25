@@ -1,7 +1,7 @@
 import sys
 import subprocess
 
-isProd = False
+isProd = True
 isTesting = False
 sanitise_database = True
 

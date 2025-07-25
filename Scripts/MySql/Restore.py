@@ -33,7 +33,6 @@ import re
 import argparse 
 from dotenv import load_dotenv
 import MySQLdb
-import collections
 
 # Load environment variables
 load_dotenv()
@@ -123,112 +122,85 @@ def drop_non_system_databases(cursor):
 
 def restore_backup():
     """
-    Parses, prints, and executes each SQL statement, waiting for user
-    confirmation before proceeding.
+    Restores the database by first dropping all non-system databases and then
+    executing the restore from the backup file using the high-performance
+    mysql command-line utility.
     """
-    print(f"\nExecuting statements from: {RESTORE_FILE}")
-    
-    table_count = 0
-    start_time = time.time()
-    current_statement = []
     connection = None
-    recent_lines = collections.deque(maxlen=200)
-    
     try:
-        # Establish a single, persistent database connection
-        print("Connecting to database...")
+        # Step 1: Connect with Python to drop databases
+        print("Connecting to database to clear existing data...")
         connection = MySQLdb.connect(**config)
         cursor = connection.cursor()
-        print("Connection successful.")
-
-        # Drop all non-system databases before restore
-        print("\nDropping non-system databases...")
         drop_non_system_databases(cursor)
+        cursor.close()
+        connection.close()
+        print("Database cleared. Proceeding with restore.")
 
-        try:
-            print("\nDisabling foreign key checks for restore...")
-            cursor.execute("SET foreign_key_checks = 0;")
+        # Step 2: Use mysql.exe for the high-performance restore
+        print(f"\nStarting database restore from {RESTORE_FILE}...")
+        start_time = time.time()
+        mysql_path = args.mysql_path or os.getenv('MYSQL_EXE_PATH') or 'mysql'
 
-            with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    recent_lines.append(line)
-                    stripped_line = line.strip()
-                    # Skip empty lines and whole-line comments
-                    if not stripped_line or stripped_line.startswith('--') or stripped_line.startswith('#') or (stripped_line.startswith('/*') and stripped_line.endswith('*/;')):
-                        continue
-                    
-                    current_statement.append(line)
-                    
-                    # Create a version of the line with inline comments removed
-                    # for the sole purpose of checking for the semicolon.
-                    line_for_check = stripped_line
-                    if '#' in line_for_check:
-                        line_for_check = line_for_check.split('#', 1)[0].strip()
-                    if '--' in line_for_check:
-                        line_for_check = line_for_check.split('--', 1)[0].strip()
-
-                    # Check if the cleaned line ends with ';'.
-                    if line_for_check.endswith(';'):
-                        full_statement = ''.join(current_statement)
-                        
-                        # If the statement is just a semicolon or whitespace, skip it
-                        if not full_statement.strip() or full_statement.strip() == ';':
-                            current_statement = []
-                            continue
-
-                        # Check for CREATE TABLE to show progress
-                        if re.search(r'\bCREATE\s+TABLE\b', full_statement, re.IGNORECASE):
-                            table_count += 1
-                            print(f"\rTables restored: {table_count}", end="", flush=True)
-
-                        # Execute the statement
-                        try:
-                            cursor.execute(full_statement)
-                            connection.commit()
-                        except MySQLdb.Error as e:
-                            # Print a newline to avoid overwriting the progress message
-                            print()
-                            print("\n--- LAST 200 LINES READ ---")
-                            for recent_line in recent_lines:
-                                sys.stdout.write(recent_line)
-                            print("---------------------------")
-                            print("\n--- FAILED SQL STATEMENT ---")
-                            sys.stdout.write(full_statement)
-                            sys.stdout.flush()
-                            print(f"\n\n--- MYSQL ERROR ---\n{e}")
-                            print("\nRestore aborted due to error.")
-                            return # Exit the function, allowing 'finally' to clean up
-                    
-                    # Reset for the next statement
-                    current_statement = []
-            
-            print() # Add a newline to move past the progress counter
-            elapsed_time = time.time() - start_time
-            print(f"\n--- End of file ---")
-            
-            # Print any remaining content in the buffer
-            if current_statement:
-                print("\n--- Remaining partial statement (not executed) ---")
-                sys.stdout.write(''.join(current_statement))
-
-            print(f"\nSuccessfully processed and restored {table_count} tables in {elapsed_time:.2f} seconds.")
+        command = [
+            mysql_path,
+            f"--host={config['host']}",
+            f"--port={config['port']}",
+            f"--user={config['user']}",
+            "mysql"  # Connect to default 'mysql' db to resolve "No database selected"
+        ]
         
-        finally:
-            print("\nRe-enabling foreign key checks...")
-            cursor.execute("SET foreign_key_checks = 1;")
-            connection.commit()
+        env = os.environ.copy()
+        if config['password']:
+            env['MYSQL_PWD'] = config['password']
+
+        with open(RESTORE_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+            process = subprocess.Popen(
+                command,
+                stdin=f,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            )
+            
+            # Wait for the process to complete and capture output
+            stdout, stderr = process.communicate()
+
+        elapsed_time = int(time.time() - start_time)
+        hours, remainder = divmod(elapsed_time, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        if process.returncode == 0:
+            print(f"\nDatabase restore completed successfully in {time_str}.")
+            if stderr:
+                print("Warnings from mysql client:")
+                print(stderr)
+        else:
+            print(f"\nDatabase restore FAILED after {time_str}.")
+            print(f"Return code: {process.returncode}")
+            if stderr:
+                print("Error details from mysql client:")
+                print(stderr)
+            sys.exit(1)
 
     except FileNotFoundError:
-        print(f"\nError: Restore file not found: {RESTORE_FILE}")
+        print(f"\nError: `{mysql_path}` command not found.")
+        print("Please ensure the MySQL command-line client is installed and in your system's PATH,")
+        print("or provide the path to it using the --mysql-path argument.")
         sys.exit(1)
     except MySQLdb.Error as e:
-        print(f"\nA critical database error occurred: {e}")
+        print(f"\nAn error occurred during the database cleaning phase: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"\nAn unexpected error occurred: {e}")
         sys.exit(1)
     finally:
-        if connection:
+        # This is for the python connection, which should be closed already,
+        # but it's good practice to have it just in case of an early exit.
+        if connection and connection.open:
             connection.close()
             print("\nDatabase connection closed.")
 

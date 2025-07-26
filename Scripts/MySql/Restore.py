@@ -1,35 +1,15 @@
+# Rest of your original script starts here - manual file paths for standalone use  
+RESTORE_FILE = r'C:\Temp\Backups\test-20250725_173620.sql'
+RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_205700-cleaned.sql'
+AUTO_CONFIRM = True  # Skip prompts for testing
+
+# ---------------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------
 import sys
 import subprocess
-
-def check_and_install_packages():
-    """Check for required packages and install if missing."""
-    required_packages = {
-        'mysqlclient': 'mysqlclient',  # This provides MySQLdb
-        'python-dotenv': 'python-dotenv'
-    }
-    
-    for import_name, package_name in required_packages.items():
-        try:
-            if import_name == 'mysqlclient':  # Special case since we import as MySQLdb
-                __import__('MySQLdb')
-            else:
-                __import__(import_name)
-        except ImportError:
-            print(f"Package {package_name} not found. Installing...")
-            try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
-                print(f"Successfully installed {package_name}")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install {package_name}. Error: {e}")
-                sys.exit(1)
-
-# Install required packages
-check_and_install_packages()
-
-# Now import the required packages
+import msvcrt
 import os
 import time 
-import re 
 import argparse 
 from dotenv import load_dotenv
 import MySQLdb
@@ -49,11 +29,6 @@ def show_cursor():
 # Load environment variables
 load_dotenv()
 
-# Rest of your original script starts here - manual file paths for standalone use  
-RESTORE_FILE = r'C:\Temp\Backups\test-20250725_173620.sql'
-# RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_131448.sql'
-TESTING = True  # Skip prompts for testing
-
 # Parse command line arguments
 def parse_arguments():
     parser = argparse.ArgumentParser(description='MySQL Database Restore Tool')
@@ -63,11 +38,21 @@ def parse_arguments():
     parser.add_argument('--password', help='MySQL password (default: from MYSQL_LOCAL_PASSWORD env var)')
     parser.add_argument('--file', help='Backup file path to restore (required)')
     parser.add_argument('--auto-confirm', action='store_true', help='Skip confirmation prompt')
-    parser.add_argument('--mysql-path', help='Path to the mysql command-line executable.')
     return parser.parse_args()
 
 # Parse arguments
 args = parse_arguments()
+
+# Override with command line argument if provided
+if args.file:
+    RESTORE_FILE = args.file
+
+# Validate restore file exists
+if not os.path.exists(RESTORE_FILE):
+    print(f"⚠️  Warning: Restore file not found: {RESTORE_FILE}")
+    print("Please check the file path and try again.")
+    print("Restore operation cannot continue without a valid backup file.")
+    exit()  # Exit gracefully
 
 # Configuration with command line argument fallbacks
 config = {
@@ -79,15 +64,6 @@ config = {
     'use_unicode': True,
 }
 
-# Override with command line argument if provided
-if args.file:
-    RESTORE_FILE = args.file
-
-# Validate restore file exists
-if not os.path.exists(RESTORE_FILE):
-    print(f"Error: Restore file not found: {RESTORE_FILE}")
-    sys.exit(1)
-
 # The rest of your original functions and code remain exactly the same
 def print_config_and_prompt():
     print("Current configuration:")
@@ -98,21 +74,25 @@ def print_config_and_prompt():
     print(f"Restore file: {RESTORE_FILE}")
     
     # Skip prompt if auto-confirm is set or if in testing mode
-    if args.auto_confirm or TESTING:
-        if TESTING:
-            print("\nTesting mode enabled. Auto-confirming...")
+    if args.auto_confirm or AUTO_CONFIRM:
+        if AUTO_CONFIRM:
+            print("\nAuto-confirm enabled. Proceeding with restore...")
         else:  # auto-confirm was used
             print("\nAuto-confirm enabled. Proceeding with restore...")
         return True
     
     while True:
-        response = input("\nDo you want to continue with the restore? (yes/no): ").lower()
-        if response in ['yes', 'y']:
+        print("\nDo you want to continue with the restore? (y/n): ", end='', flush=True)
+        key = msvcrt.getch().decode('utf-8').lower()
+        print(key)  # Echo the key pressed
+        if key == 'y':
+            print("Yes - proceeding with restore...")
             return True
-        elif response in ['no', 'n']:
+        elif key == 'n':
+            print("No - aborting restore.")
             return False
         else:
-            print("Please enter 'yes' or 'no'.")
+            print("Please press 'y' for yes or 'n' for no.")
 
 def drop_non_system_databases(cursor):
     """Drops all non-system databases."""
@@ -156,7 +136,7 @@ def restore_backup():
         
         hide_cursor() # Hide cursor before the restore process starts
 
-        mysql_path = args.mysql_path or os.getenv('MYSQL_EXE_PATH') or 'mysql'
+        mysql_path = os.getenv('MYSQL_EXE_PATH') or 'mysql'
 
         command = [
             mysql_path,
@@ -220,7 +200,7 @@ def restore_backup():
     except FileNotFoundError:
         print(f"\nError: `{mysql_path}` command not found.")
         print("Please ensure the MySQL command-line client is installed and in your system's PATH,")
-        print("or provide the path to it using the --mysql-path argument.")
+        print("or set its full path in the MYSQL_EXE_PATH environment variable.")
         sys.exit(1)
     except MySQLdb.Error as e:
         print(f"\nAn error occurred during the database cleaning phase: {e}")

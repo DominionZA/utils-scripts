@@ -1,83 +1,62 @@
+IS_PROD = True
+SANITISE_DATABASE = True
+
+# ---------------------------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------
 import sys
 import subprocess
-
-isProd = True
-isTesting = False
-sanitise_database = True
-
-def install_base_packages():
-    """Install the base packages needed for package management."""
-    try:
-        import setuptools
-    except ImportError:
-        print("Installing setuptools...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "setuptools"])
-        print("Successfully installed setuptools")
-
-# Install base packages first
-install_base_packages()
-
-# Now we can safely import pkg_resources and other modules
-import pkg_resources
 import os
 import datetime
 import threading
 import time
-from importlib import util
-
-def check_and_install_packages():
-    """Check for required packages and install if missing."""
-    required_packages = {
-        'mysql-connector': 'mysql-connector-python',
-        'dotenv': 'python-dotenv'
-    }
-    
-    for import_name, package_name in required_packages.items():
-        try:
-            __import__(import_name)
-        except ImportError:
-            print(f"Package {package_name} not found. Installing...")
-            try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
-                print(f"Successfully installed {package_name}")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install {package_name}. Error: {e}")
-                sys.exit(1)
-
-# Check and install required packages
-check_and_install_packages()
-
-# Now import the required packages
+import argparse
 import mysql.connector
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Determine environment based on isProd setting
-if isProd:
+# Parse command line arguments first
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='MySQL Database Backup Tool')
+    parser.add_argument('--host', help='MySQL host (overrides environment variables)')
+    parser.add_argument('--port', type=int, help='MySQL port (overrides environment variables)')
+    parser.add_argument('--user', help='MySQL username (overrides environment variables)')
+    parser.add_argument('--password', help='MySQL password (overrides environment variables)')
+    parser.add_argument('--file', help='Full path for the backup file (overrides automatic naming)')
+    return parser.parse_args()
+
+args = parse_arguments()
+
+# Determine environment based on IS_PROD setting
+if IS_PROD:
     environment = 'PROD'
 else:
     environment = 'TEST'
 
-# Connection details from environment variables
+# Connection details from environment variables, overridden by args
 config = {
-    'host': os.getenv(f'MYSQL_{environment}_HOST'),
-    'port': int(os.getenv(f'MYSQL_{environment}_PORT', 3306)),
-    'user': os.getenv(f'MYSQL_{environment}_USER'),
-    'password': os.getenv(f'MYSQL_{environment}_PASSWORD')
+    'host': args.host or os.getenv(f'MYSQL_{environment}_HOST'),
+    'port': args.port or int(os.getenv(f'MYSQL_{environment}_PORT', 3306)),
+    'user': args.user or os.getenv(f'MYSQL_{environment}_USER'),
+    'password': args.password or os.getenv(f'MYSQL_{environment}_PASSWORD')
 }
 
 # Backup directory
 backup_dir = os.getenv('BACKUP_DIR', r'C:\Temp\Backups')
 os.makedirs(backup_dir, exist_ok=True)
 
-# Generate backup filename
-timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-backup_file = os.path.join(backup_dir, f'{environment.lower()}-{timestamp}.sql')
+# Generate backup filename, overridden by args
+if args.file:
+    backup_file = args.file
+else:
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_file = os.path.join(backup_dir, f'{environment.lower()}-{timestamp}.sql')
 
 # Path to mysqldump from environment variable
 MYSQL_DUMP_PATH = os.getenv('MYSQL_DUMP_PATH', r"C:\Program Files\MySQL\MySQL Workbench 8.0 CE\mysqldump.exe")
+
+
 
 def display_configuration():
     """Display the current configuration being used for the backup."""
@@ -101,7 +80,7 @@ def get_total_table_count():
     return total_tables
 
 # Function to show progress
-def show_progress(total_tables):
+def show_progress(total_tables, backup_complete):
     start_time = time.time()
     while not backup_complete.is_set():
         if os.path.exists(backup_file):
@@ -112,30 +91,13 @@ def show_progress(total_tables):
             hours, remainder = divmod(elapsed_time, 3600)
             minutes, seconds = divmod(remainder, 60)
             time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            print(f"\rProgress: {progress:.2f}% ({current_tables}/{total_tables} tables) | Time elapsed: {time_str}", end="", flush=True)
+            output_line = f"Progress: {progress:.2f}% ({current_tables}/{total_tables} tables) | Time elapsed: {time_str}"
+            # Add padding with spaces to ensure the previous line is fully overwritten
+            print(f"\r{output_line:<100}", end="", flush=True)
         time.sleep(1)
 
 # Function to execute custom SQL commands
-def execute_custom_sql_commands():
-    conn = mysql.connector.connect(**config)
-    cursor = conn.cursor()
-    try:
-        # Custom SQL commands
-        custom_commands = [
-            # Add more commands as needed
-        ]
-        
-        for command in custom_commands:
-            print(f"Executing: {command}")
-            cursor.execute(command)
-            conn.commit()
-        
-        print("Custom SQL commands executed successfully")
-    except mysql.connector.Error as err:
-        print(f"Error executing custom SQL commands: {err}")
-    finally:
-        cursor.close()
-        conn.close()
+
 
 # Function to setup MySQL Docker container
 def setup_mysql_docker_container():
@@ -152,6 +114,21 @@ def setup_mysql_docker_container():
         result = subprocess.run(["docker", "--version"], 
                               capture_output=True, text=True, check=True)
         print(f"Docker found: {result.stdout.strip()}")
+        
+        # Check if container is already running
+        print(f"Checking if {container_name} container is already running...")
+        check_result = subprocess.run(["docker", "ps", "--filter", f"name={container_name}", "--format", "{{.Names}}"], 
+                                    capture_output=True, text=True, check=False)
+        
+        if container_name in check_result.stdout:
+            print(f"✅ Container {container_name} is already running!")
+            return {
+                'host': 'localhost',
+                'port': mysql_port,
+                'user': 'root',
+                'password': mysql_password,
+                'container_name': container_name
+            }
         
         # Stop and remove existing container if it exists
         print(f"Stopping and removing existing {container_name} container...")
@@ -220,88 +197,44 @@ def setup_mysql_docker_container():
         print(f"\n❌ Error: {e}")
         sys.exit(1)
 
-def test_restore_integration():
-    """Test restore script integration with container."""
-    print("\n🧪 TESTING MODE: Testing restore script invocation...")
+def compress_to_7z(filename):
+    """
+    Compress a file to .gz format using Python's built-in gzip.
     
-    # Container details for existing temp-mysql-8 container
-    container_info = {
-        'host': 'localhost',
-        'port': '3307',
-        'user': 'root',
-        'password': 'testpassword',
-        'container_name': 'temp-mysql-8'
-    }
+    Args:
+        filename (str): Path to the file to compress
+        
+    Returns:
+        str: Path to the compressed .gz file if successful, None if failed
+    """
+    import gzip
     
-    # Test backup file
-    test_backup_file = r'C:\Temp\Backups\full_backup_20250423_201200.sql.gz'
-    
-    print(f"Testing restore with:")
-    print(f"  Container: {container_info['container_name']}")
-    print(f"  Host: {container_info['host']}:{container_info['port']}")
-    print(f"  User: {container_info['user']}")
-    print(f"  Backup file: {test_backup_file}")
-    
-    # Check if backup file exists
-    if not os.path.exists(test_backup_file):
-        print(f"❌ Test backup file not found: {test_backup_file}")
-        print("Please ensure the backup file exists or update the path.")
-        sys.exit(1)
-    
-    # Invoke restore script with container details
-    print("\n🚀 Invoking restore script...")
-    restore_cmd = [
-        sys.executable, "Scripts/MySql/Restore.py",
-        "--host", container_info['host'],
-        "--port", container_info['port'],
-        "--user", container_info['user'],
-        "--password", container_info['password'],
-        "--file", test_backup_file,
-        "--auto-confirm"
-    ]
+    print(f"🗜️ Compressing {os.path.basename(filename)} to .gz...")
+    compressed_file = f"{filename}.gz"
     
     try:
-        print(f"Running command: {' '.join(restore_cmd)}")
-        result = subprocess.run(restore_cmd, check=True, text=True)
-        print("✅ Restore script completed successfully!")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Restore script failed with exit code: {e.returncode}")
-        sys.exit(1)
+        with open(filename, 'rb') as f_in:
+            with gzip.open(compressed_file, 'wb') as f_out:
+                f_out.writelines(f_in)
+        
+        print(f"✅ Compressed file created: {os.path.basename(compressed_file)}")
+        return compressed_file
+        
     except Exception as e:
-        print(f"❌ Error invoking restore script: {e}")
-        sys.exit(1)
+        print(f"❌ Compression failed: {e}")
+        return None
 
-# Main execution
-if __name__ == "__main__":
-    # Display current configuration
-    display_configuration()
-    
-    # Testing mode - only test restore integration to save time
-    if isTesting:
-        test_restore_integration()
-        sys.exit(0)
-    
-    # Normal execution - ALWAYS do backup
-    # ORIGINAL BACKUP FUNCTIONALITY (preserved)
-    # Check if mysqldump exists
-    if not os.path.exists(MYSQL_DUMP_PATH):
-        print(f"Error: mysqldump not found at {MYSQL_DUMP_PATH}")
-        print("Please install MySQL and set the correct path in the MYSQL_DUMP_PATH environment variable")
-        sys.exit(1)
-
-    # Execute custom SQL commands
-    execute_custom_sql_commands()
- 
+def execute_backup():
+    """Execute the main database backup process."""
     # Get total table count
     total_tables = get_total_table_count()
-
     print(f"Total tables to backup: {total_tables}")
 
     # Flag to signal backup completion
     backup_complete = threading.Event()
 
     # Start progress thread
-    progress_thread = threading.Thread(target=show_progress, args=(total_tables,))
+    progress_thread = threading.Thread(target=show_progress, args=(total_tables, backup_complete))
     progress_thread.start()
 
     # Execute mysqldump for each database separately
@@ -356,36 +289,169 @@ if __name__ == "__main__":
         progress_thread.join()
         print(f"\nBackup completed successfully. File saved as: {backup_file}")
         
-        # After backup, check if we also want to sanitise
-        if sanitise_database:
-            print("\n🧹 SANITISING: Setting up Docker container for restore testing...")
-            
-            # Setup Docker container
-            container_info = setup_mysql_docker_container()
-            
-            # Restore the backup we just created to container
-            print(f"\n🚀 Restoring backup to container...")
-            restore_cmd = [
-                sys.executable, "Scripts/MySql/Restore.py",
-                "--host", container_info['host'],
-                "--port", container_info['port'],
-                "--user", container_info['user'],
-                "--password", container_info['password'],
-                "--file", backup_file,  # Use the backup we just created
-                "--auto-confirm"
-            ]
-            
-            try:
-                subprocess.run(restore_cmd, check=True, text=True)
-                print("✅ Sanitise workflow completed!")
-            except subprocess.CalledProcessError as e:
-                print(f"❌ Restore failed during sanitise workflow: {e.returncode}")
-                sys.exit(1)
-        
     except subprocess.CalledProcessError as e:
         backup_complete.set()
         progress_thread.join()
         print(f"\nBackup failed. Error: {e.stderr.decode()}")
+        raise
     finally:
         cursor.close()
         conn.close()
+
+def restore_to_docker_container(container_info):
+    """Restore backup to Docker container."""
+    print(f"\n🚀 Restoring backup to container...")
+    restore_cmd = [
+        sys.executable, "Scripts/MySql/Restore.py",
+        "--host", container_info['host'],
+        "--port", container_info['port'],
+        "--user", container_info['user'],
+        "--password", container_info['password'],
+        "--file", backup_file,  # Use the backup we just created
+        "--auto-confirm"
+    ]
+    
+    try:
+        subprocess.run(restore_cmd, check=True, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Restore failed during sanitise workflow: {e.returncode}")
+        sys.exit(1)
+
+def execute_clean_data_script(container_info):
+    """Execute CleanData.sql to sanitize the data."""
+    print(f"\n🧹 Executing CleanData.sql to sanitize data...")
+    clean_data_file = os.path.join(os.path.dirname(__file__), "CleanData.sql")
+    
+    mysql_path = os.getenv('MYSQL_EXE_PATH') or 'mysql'
+    clean_cmd = [
+        mysql_path,
+        f"--host={container_info['host']}",
+        f"--port={container_info['port']}",
+        f"--user={container_info['user']}"
+    ]
+    
+    env = os.environ.copy()
+    env['MYSQL_PWD'] = container_info['password']
+    
+    try:
+        with open(clean_data_file, 'r', encoding='utf-8', errors='ignore') as f:
+            process = subprocess.run(
+                clean_cmd,
+                stdin=f,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+        print("✅ Data sanitization completed!")
+    except FileNotFoundError:
+        print(f"❌ Error: CleanData.sql not found at {clean_data_file}")
+        return False
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Data sanitization failed: {e.returncode}")
+        if e.stderr:
+            print(f"Error details: {e.stderr}")
+        return False
+    
+    return True
+
+def backup_cleaned_database(container_info):
+    """Simple backup of the entire cleaned Docker container database."""
+    # Generate cleaned backup filename
+    base_name, extension = os.path.splitext(backup_file)
+    cleaned_backup_file = f"{base_name}-cleaned{extension}"
+    
+    print(f"\n💾 Backing up cleaned database to {os.path.basename(cleaned_backup_file)}...")
+    
+    # Get non-system databases and use --databases switch for CREATE DATABASE statements
+    conn = mysql.connector.connect(
+        host=container_info['host'],
+        port=int(container_info['port']),
+        user=container_info['user'],
+        password=container_info['password']
+    )
+    cursor = conn.cursor()
+    cursor.execute("SHOW DATABASES")
+    databases = [db[0] for db in cursor.fetchall() if db[0] not in ['information_schema', 'mysql', 'performance_schema', 'sys']]
+    cursor.close()
+    conn.close()
+
+    # Simple mysqldump with --databases for all tables including PingHistory
+    mysqldump_cmd = [
+        MYSQL_DUMP_PATH,
+        f'--host={container_info["host"]}',
+        f'--port={container_info["port"]}',
+        f'--user={container_info["user"]}',
+        f'--password={container_info["password"]}',
+        '--single-transaction',
+        '--quick',
+        '--lock-tables=false',
+        '--set-gtid-purged=OFF',
+        '--compress',
+        '--skip-triggers',
+        '--skip-routines',
+        '--skip-events',
+        '--databases'
+    ] + databases
+
+    try:
+        with open(cleaned_backup_file, 'wb') as f:
+            subprocess.run(mysqldump_cmd, stdout=f, stderr=subprocess.PIPE, check=True)
+        print(f"✅ Cleaned backup completed: {cleaned_backup_file}")
+        
+        # Compress the backup file
+        compressed_file = compress_to_7z(cleaned_backup_file)
+        if compressed_file:
+            print(f"✅ Final compressed backup: {compressed_file}")
+        else:
+            print(f"✅ Final backup: {cleaned_backup_file}")
+            
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Cleaned backup failed: {e.returncode}")
+        if e.stderr:
+            print(f"Error details: {e.stderr.decode()}")
+        sys.exit(1)
+    
+
+
+def sanitize_database():
+    """Complete database sanitization workflow."""
+    print("\n🧹 SANITISING: Setting up Docker container for restore testing...")
+    
+    # Setup Docker container (check if running, create if needed)
+    container_info = setup_mysql_docker_container()
+    
+    # Check if backup file exists before trying to restore
+    # if not os.path.exists(backup_file):
+    #     print(f"⚠️  Warning: Backup file not found: {backup_file}")
+    #     print("Cannot restore to container - backup file missing")
+    #     return
+    
+    # Restore the backup we just created to container
+    # restore_to_docker_container(container_info)
+    
+    # Execute CleanData.sql to sanitize the data
+    if not execute_clean_data_script(container_info):
+        print("❌ Sanitize workflow stopped due to CleanData.sql failure")
+        return
+    
+    # Backup the cleaned database
+    backup_cleaned_database(container_info)
+    
+    print("✅ Sanitise workflow completed!")
+
+if __name__ == "__main__":
+    # Display current configuration
+    display_configuration()
+    
+    # Check if mysqldump exists
+    if not os.path.exists(MYSQL_DUMP_PATH):
+        print(f"Error: mysqldump not found at {MYSQL_DUMP_PATH}")
+        print("Please install MySQL and set the correct path in the MYSQL_DUMP_PATH environment variable")
+        sys.exit(1)
+
+    # execute_backup()
+    
+    # Execute sanitization if requested
+    if IS_PROD and SANITISE_DATABASE:
+        sanitize_database()

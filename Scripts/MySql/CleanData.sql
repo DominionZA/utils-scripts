@@ -1,17 +1,15 @@
 SET foreign_key_checks = 0;
 
-
 USE aura_cloud_invoicing;
 
 CREATE TABLE IF NOT EXISTS aura_cloud_device.PingHistory (
   Id bigint UNSIGNED NOT NULL AUTO_INCREMENT,
   DeviceId int NOT NULL,
   Time datetime NOT NULL,
-  PRIMARY KEY (Id)
-)
-ENGINE = INNODB,
-CHARACTER SET utf8mb4,
-COLLATE utf8mb4_0900_ai_ci;
+  PRIMARY KEY (Id),
+  INDEX IDX_PingHistory (DeviceId, Time),
+  CONSTRAINT FK_PingHistory_DeviceId FOREIGN KEY (DeviceId) REFERENCES aura_cloud_device.Device (Id)
+);
 
 truncate TABLE aura_cloud_device.PingHistory;
 truncate TABLE aura_cloud_device.DeviceVersionHistory;
@@ -141,12 +139,12 @@ SET foreign_key_checks = 1;
 
 UPDATE aura_cloud_brand.VirtualDevice vd SET Name = 'TILL1' where Id = 710;
 UPDATE aura_cloud_brand.Store SET IsNextGen = 1, TimeAndAttendanceVirtualDeviceTillId = 710 where Id = 'TEST01';
-INSERT IGNORE INTO aura_cloud_brand.VirtualDevice (StoreId, Name, IsEnabled, DeviceTypeId) VALUES ('TEST01', 'Online Ordering', 1, 8);
+INSERT INTO aura_cloud_brand.VirtualDevice (StoreId, Name, IsEnabled, DeviceTypeId) VALUES ('TEST01', 'Online Ordering', 1, 8);
 set @tillid = LAST_INSERT_ID();
-INSERT IGNORE INTO aura_cloud_auth.PosUser (StoreId, AbbreviatedName, EmployeeNumber, Password, IsEnabled, PosUserTypeId, PosPassword) VALUES ('TEST01', 'ONLINE', 'ZZZ', UUID(), 1, 1, uuid());
+INSERT INTO aura_cloud_auth.PosUser (StoreId, AbbreviatedName, EmployeeNumber, Password, IsEnabled, PosUserTypeId, PosPassword) VALUES ('TEST01', 'ONLINE', 'ZZZ', UUID(), 1, 1, uuid());
 set @employeeid = LAST_INSERT_ID();
-INSERT IGNORE INTO aura_cloud_auth.User(Name, Surname, StakeholderId, PosUserId) VALUES ('ONLINE', 'ORDERING', 5, @employeeid);
-INSERT IGNORE INTO aura_cloud_online_ordering.StoreProfile (Id, UseMediator, TillId, EmployeeId, StoreDesignatedVirtualDeviceId) VALUES ('TEST01', 0, @tillid, @employeeid, 710);
+INSERT INTO aura_cloud_auth.User(Name, Surname, StakeholderId, PosUserId) VALUES ('ONLINE', 'ORDERING', 5, @employeeid);
+INSERT INTO aura_cloud_online_ordering.StoreProfile (Id, UseMediator, TillId, EmployeeId, StoreDesignatedVirtualDeviceId) VALUES ('TEST01', 0, @tillid, @employeeid, 710);
 UPDATE aura_cloud_brand.Store s SET s.IsOnlineOrderingEnabled = 1 WHERE s.Id = 'TEST01';
 
 INSERT INTO aura_cloud_brand.SalesChannel (Name, BrandId, HasAccount, IsForIntegrationPartner, IsEnabled, AlwaysUseAccount, `Order`) VALUES ('Cosoft Testing', 38, 1, 1, 1, 1, 1);
@@ -164,13 +162,3 @@ insert INTO aura_cloud_payment.StorePaymentMethodProfileConfig (StorePaymentMeth
 insert INTO aura_cloud_payment.TillPaymentMethodConfiguration (StorePaymentMethodProfileId, VirtualDeviceId) VALUES (@storepaymentmethodprofileid, 710);
 SET @tillpaymentmethodconfigurationid = LAST_INSERT_ID();
 insert INTO aura_cloud_payment.TillPaymentMethodConfigurationConfig (TillPaymentMethodConfigurationId, DataKey, DataValue) VALUES (@tillpaymentmethodconfigurationid, 'TerminalId',	'57290078');
-
-
-SET sql_notes = 0;
-SET sql_warnings = 0;
-
--- Drop foreign key first, then index, then recreate both
-ALTER TABLE aura_cloud_device.PingHistory DROP FOREIGN KEY FK_PingHistory_DeviceId;
-ALTER TABLE aura_cloud_device.PingHistory DROP INDEX IDX_PingHistory;
-ALTER TABLE aura_cloud_device.PingHistory ADD INDEX IDX_PingHistory (DeviceId, Time);
-ALTER TABLE aura_cloud_device.PingHistory ADD CONSTRAINT FK_PingHistory_DeviceId FOREIGN KEY (DeviceId) REFERENCES aura_cloud_device.Device (Id);

@@ -1,6 +1,6 @@
 # Rest of your original script starts here - manual file paths for standalone use  
-RESTORE_FILE = r'C:\Temp\Backups\test-20250725_173620.sql'
-RESTORE_FILE = r'C:\Temp\Backups\prod-20250725_205700-cleaned.sql'
+RESTORE_FILE = r'C:\Temp\Backups\test-20250726_122416.sql'
+RESTORE_FILE = r'C:\Temp\Backups\prod-20250726_121800-cleaned.sql'
 AUTO_CONFIRM = True  # Skip prompts for testing
 
 # ---------------------------------------------------------------------------------------------------------

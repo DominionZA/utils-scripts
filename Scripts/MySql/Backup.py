@@ -53,6 +53,8 @@ else:
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     backup_file = os.path.join(backup_dir, f'{environment.lower()}-{timestamp}.sql')
 
+backup_file = "C:\Temp\Backups\prod-20250725_205700.sql"
+
 # Path to mysqldump from environment variable
 MYSQL_DUMP_PATH = os.getenv('MYSQL_DUMP_PATH', r"C:\Program Files\MySQL\MySQL Workbench 8.0 CE\mysqldump.exe")
 
@@ -422,13 +424,13 @@ def sanitize_database():
     container_info = setup_mysql_docker_container()
     
     # Check if backup file exists before trying to restore
-    # if not os.path.exists(backup_file):
-    #     print(f"⚠️  Warning: Backup file not found: {backup_file}")
-    #     print("Cannot restore to container - backup file missing")
-    #     return
+    if not os.path.exists(backup_file):
+        print(f"⚠️  Warning: Backup file not found: {backup_file}")
+        print("Cannot restore to container - backup file missing")
+        return
     
     # Restore the backup we just created to container
-    # restore_to_docker_container(container_info)
+    restore_to_docker_container(container_info)
     
     # Execute CleanData.sql to sanitize the data
     if not execute_clean_data_script(container_info):
